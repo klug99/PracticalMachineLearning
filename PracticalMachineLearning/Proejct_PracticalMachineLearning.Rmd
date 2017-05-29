@@ -1,0 +1,163 @@
+---
+title: "Practical Machine Learning-Project"
+author: "Minseo Park"
+date: "05292017"
+output: html_document
+---
+
+## Overview
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement ??? a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+##Goal
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+##Setting Library
+```{r}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+```
+
+##Data
+```{r}
+set.seed(12345)
+
+training <- read.csv("D:/R/Coursera/PracticalMachineLearning/pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv("D:/R/Coursera/PracticalMachineLearning/pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+
+## Traing data has been divided into two: Training Data : 60%, Testing Data: 40% 
+inTrain <- createDataPartition(training$classe, p=0.6, list=FALSE)
+Proj_Training <- training[inTrain, ]
+Proj_Testing <- training[-inTrain, ]
+## dim() function gets or sets the dimension of a matrix, array or data frame.
+dim(Proj_Training); dim(Proj_Testing)
+```
+
+
+
+##Preprocessing: Data Creaning
+```{r}
+##Remove variables with near-Zero Variance: Identification Of Near Zero Variance Predictors nearZeroVar diagnoses predictors that have one unique value (i.e. are zero variance predictors) or predictors that are have both of the following characteristics: they have very few unique values relative to the number of samples and the ratio of the frequency of the most common value to the frequency of the second most common value is large.  
+##saveMetrics: a logical. If false, the positions of the zero- or near-zero predictors is returned. If true, a data frame with predictor information is returned.
+nzv <- nearZeroVar(Proj_Training, saveMetrics=TRUE)
+Proj_Training <- Proj_Training[,nzv$nzv==FALSE]
+
+nzv<- nearZeroVar(Proj_Testing,saveMetrics=TRUE)
+Proj_Testing<- Proj_Testing[,nzv$nzv==FALSE]
+
+dim(Proj_Training); dim(Proj_Testing)
+```
+
+###Remove first column "X"
+```{r}
+Proj_Training <- Proj_Training[c(-1)]
+```
+
+###Remove variables with more then 70% NA
+```{r}
+##Clean variables with more than 70% NA
+training_NaN <- Proj_Training
+for(i in 1:length(Proj_Training)) {
+  if( sum( is.na( Proj_Training[, i] ) ) /nrow(Proj_Training) >= .7) {
+    for(j in 1:length(training_NaN)) {
+      if( length( grep(names(Proj_Training[i]), names(training_NaN)[j]) ) == 1)  {
+        training_NaN <- training_NaN[ , -j]
+      }   
+    } 
+  }
+}
+
+# Set back to the original variable name
+Proj_Training <- training_NaN
+rm(training_NaN)
+```
+###Clean testing data
+```{r}
+clean_training <- colnames(Proj_Training)
+clean_training_2 <- colnames(Proj_Training[, -58])  # remove the classe column
+Proj_Testing <- Proj_Testing[clean_training]         # allow only variables in Proj_Testing that are also in Proj_Training
+testing <- testing[clean_training_2]             # allow only variables in testing that are also in Proj_Training
+
+dim(Proj_Testing)
+dim(testing)
+```
+
+###Coerce the data into the same type
+```{r}
+for (i in 1:length(testing) ) {
+  for(j in 1:length(Proj_Training)) {
+    if( length( grep(names(Proj_Training[i]), names(testing)[j]) ) == 1)  {
+      class(testing[j]) <- class(Proj_Training[i])
+    }      
+  }      
+}
+
+# To get the same class between testing and Proj_Training
+testing <- rbind(Proj_Training[2, -58] , testing)
+testing <- testing[-1,]
+```
+
+##Algorithm: Prediction with Decision Tree
+###Decision Tree
+```{r}
+set.seed(12345)
+Model_DecisionTree <- rpart(classe ~ ., data=Proj_Training, method="class")
+fancyRpartPlot(Model_DecisionTree)
+
+predictions_Model_DecisionTree <- predict(Model_DecisionTree, Proj_Testing, type = "class")
+cmtree <- confusionMatrix(predictions_Model_DecisionTree,Proj_Testing$classe)
+cmtree
+```
+plot
+```{r}
+plot(cmtree$table, col = cmtree$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(cmtree$overall['Accuracy'], 4)))
+```
+
+###Random Forest
+```{r}
+#Random Forest
+set.seed(12345)
+Model_RandomForest <- randomForest(classe ~ ., data=Proj_Training)
+prediction_Model_RandomForest <- predict(Model_RandomForest,  Proj_Testing, type = "class")
+cmrf <- confusionMatrix(prediction_Model_RandomForest, Proj_Testing$classe)
+cmrf
+
+plot(Model_RandomForest)
+
+plot(cmrf$table, col = cmtree$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cmrf$overall['Accuracy'], 4)))
+```
+
+## Predicting on Testing data
+Random Forests gave an Accuracy in the Proj_ Testing dataset of 99.89%, which was more accurate that what I got from the Decision Trees. 
+The expected out-of-sample error is 100-99.89 = 0.11%.
+```{r}
+prediction_Testing <- predict(Model_RandomForest, testing, type = "class")
+prediction_Testing
+```
+
+[Appendix]
+##Cross-Validation
+
+###Decision Tree with Cross Validation
+In practice, k=5 or k=10 when doing k-fold cross validation. Here we consider 5-fold cross validation (default setting in trainControl function is 10) when implementing the algorithm to save a little computing time. Since data transformations may be less important in non-linear models like classification trees, we do not transform any variables.
+```{r}
+control <- trainControl(method = "cv", number = 5)
+fit_rpart <- train(classe ~ ., data = Proj_Training, method = "rpart", 
+                   trControl = control)
+print(fit_rpart, digits = 4)
+fancyRpartPlot(fit_rpart$finalModel)
+```
+```{r}
+# predict outcomes using validation set
+predict_rpart <- predict(fit_rpart, Proj_Testing)
+# Show prediction result
+conf_rpart <- confusionMatrix(Proj_Testing$classe, predict_rpart)
+conf_rpart
+accuracy_rpart <- conf_rpart$overall[1]
+accuracy_rpart
+```
+From the confusion matrix, the accuracy rate is 0.46, and so the out-of-sample error rate is 0.5. Using classification tree does not predict the outcome classe very well.
